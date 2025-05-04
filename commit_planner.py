@@ -68,19 +68,46 @@ def truncate_diff_text(diff_text, max_tokens=3000):
 
 
 def commit_with_message(message: str, repo_path: str) -> bool:
-    lock_path = os.path.join(repo_path, ".git", "HEAD.lock")
-    if os.path.exists(lock_path):
-        console.print(f"[yellow]⚠️ Removing leftover HEAD.lock file...[/yellow]")
-        os.remove(lock_path)
+    # 清除潜在 git 锁文件
+    lock_files = [
+        ".git/index.lock",
+        ".git/HEAD.lock",
+        ".git/refs/heads/main.lock"
+    ]
+    for lock_file in lock_files:
+        full_path = os.path.join(repo_path, lock_file)
+        if os.path.exists(full_path):
+            print(f"🧹 Removing stale lock: {full_path}")
+            os.remove(full_path)
 
+    # 检查是否已经有 staged 文件
     try:
-        subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
+        result = subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True, cwd=repo_path)
+        staged_files = result.stdout.strip().splitlines()
+    except Exception as e:
+        print(f"❌ Failed to check staged files: {e}")
+        staged_files = []
+
+    # 如果没有 staged 文件，执行 git add .
+    if not staged_files:
+        print("🌀 No files staged yet. Running `git add .` ...")
+        try:
+            subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Git add failed: {e}")
+            return False
+    else:
+        print(f"✅ Detected {len(staged_files)} staged files. Skipping `git add .`")
+
+    # 尝试提交
+    try:
         subprocess.run(["git", "commit", "-m", message], check=True, cwd=repo_path)
-        console.print("[green]✅ Commit completed.[/green]")
+        print("✅ Commit completed.")
         return True
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]❌ Git commit failed: {e}[/red]")
+        print(f"❌ Git commit failed: {e}")
         return False
+
 
 
 def push_changes(repo_path: str) -> bool:
