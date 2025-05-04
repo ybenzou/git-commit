@@ -177,7 +177,9 @@ def main():
         "You are a professional software engineer. "
         "Write a one-line Git commit message using the Conventional Commit format "
         "based on the following Git diff and file-level changes.\n\n"
+        "Write only the commit title in English, no explanation or markdown.\n"
     )
+
 
     if diff["added"]:
         prompt += f"Added files: {', '.join(diff['added'])}\n"
