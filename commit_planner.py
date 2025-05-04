@@ -4,6 +4,13 @@ import sys
 import platform
 from datetime import datetime
 from llm_agent import generate_commit_message
+from rich import print
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Confirm
+
+console = Console()
+
 
 def get_git_diff_summary(repo_path):
     try:
@@ -32,16 +39,18 @@ def get_git_diff_summary(repo_path):
 
         return {"added": added, "modified": modified, "deleted": deleted}
     except Exception as e:
-        print(f"❌ Error getting git status: {e}")
+        console.print(f"[red]❌ Error getting git status: {e}[/red]")
         return {"added": [], "modified": [], "deleted": []}
+
 
 def get_diff_content(repo_path):
     try:
         result = subprocess.run(["git", "diff"], capture_output=True, text=True, cwd=repo_path)
         return result.stdout.strip()
     except Exception as e:
-        print(f"❌ Failed to get diff: {e}")
+        console.print(f"[red]❌ Failed to get diff: {e}[/red]")
         return ""
+
 
 def truncate_diff_text(diff_text, max_tokens=3000):
     lines = diff_text.strip().splitlines()
@@ -57,53 +66,59 @@ def truncate_diff_text(diff_text, max_tokens=3000):
 
     return "\n".join(result_lines)
 
-def prompt_user_confirmation(message: str) -> bool:
-    print("\n✏️ Suggested commit message:\n")
-    print(f">>> {message}\n")
-    confirm = input("✅ Do you want to commit with this message? (Y/n): ").strip().lower()
-    return confirm in ["", "y", "yes"]
 
 def commit_with_message(message: str, repo_path: str) -> bool:
+    lock_path = os.path.join(repo_path, ".git", "HEAD.lock")
+    if os.path.exists(lock_path):
+        console.print(f"[yellow]⚠️ Removing leftover HEAD.lock file...[/yellow]")
+        os.remove(lock_path)
+
     try:
         subprocess.run(["git", "add", "."], check=True, cwd=repo_path)
         subprocess.run(["git", "commit", "-m", message], check=True, cwd=repo_path)
-        print("✅ Commit completed.")
+        console.print("[green]✅ Commit completed.[/green]")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Git commit failed: {e}")
+        console.print(f"[red]❌ Git commit failed: {e}[/red]")
         return False
+
 
 def push_changes(repo_path: str) -> bool:
     try:
         subprocess.run(["git", "push"], check=True, cwd=repo_path)
-        print("✅ Push successful.")
+        console.print("[green]✅ Push successful.[/green]")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"❌ Git push failed: {e}")
+        console.print(f"[red]❌ Git push failed: {e}[/red]")
         return False
+
 
 def read_or_create_version(repo_path: str):
     version_file = os.path.join(repo_path, "version.txt")
     if not os.path.exists(version_file):
-        print("📦 version.txt not found, creating new version starting from 0.0.0")
+        console.print("[cyan]📦 version.txt not found, creating new version starting from 0.0.0[/cyan]")
         with open(version_file, "w") as f:
             f.write("0.0.0")
         return "0.0.0"
     with open(version_file, "r") as f:
         return f.read().strip()
 
+
 def bump_patch_version(version: str) -> str:
     major, minor, patch = map(int, version.strip().split("."))
     patch += 1
     return f"{major}.{minor}.{patch}"
+
 
 def write_new_version(repo_path: str, version: str):
     version_file = os.path.join(repo_path, "version.txt")
     with open(version_file, "w") as f:
         f.write(version)
 
+
 def get_timestamp():
     return datetime.now().strftime("%Y-%m-%d %H:%M")
+
 
 def get_author(repo_path: str):
     try:
@@ -112,19 +127,21 @@ def get_author(repo_path: str):
     except:
         return "unknown"
 
+
 def get_env_info():
     python_version = ".".join(map(str, sys.version_info[:3]))
     system_info = f"{platform.system()}-{platform.release()}"
     return f"Python {python_version}, {system_info}"
 
+
 def main():
     repo_path = os.getcwd()
-    print(f"📁 Working in: {repo_path}")
-    print("🔍 Scanning working directory changes...")
+    console.print(f"[bold green]📁 Working in:[/bold green] {repo_path}")
+    console.print("[bold blue]🔍 Scanning working directory changes...[/bold blue]")
 
     diff = get_git_diff_summary(repo_path)
     if not any(diff.values()):
-        print("✅ No changes detected. Nothing to commit.")
+        console.print("[green]✅ No changes detected. Nothing to commit.[/green]")
         return
 
     current_version = read_or_create_version(repo_path)
@@ -145,26 +162,27 @@ def main():
     diff_text = truncate_diff_text(get_diff_content(repo_path), max_tokens=3000)
     prompt += f"\nGit diff:\n{diff_text}"
 
-    print("🤖 Generating commit message with Gemini...")
+    console.print("[bold cyan]🤖 Generating commit message with Gemini...[/bold cyan]")
     message = generate_commit_message(prompt)
 
     timestamp = get_timestamp()
     author = get_author(repo_path)
     env_info = get_env_info()
-    full_message = f"{message} (v{current_version} @{timestamp}) [by {author}, {env_info}]"
+    metadata = f"(by {author}, v{current_version} @{timestamp}, {env_info})"
+    full_message = f"{message.strip()}\n\n{metadata}"
 
-    print(f"\n📝 Final commit message:\n{full_message}")
+    console.print("\n[bold magenta]📝 Final commit message:[/bold magenta]")
+    console.print(Panel(full_message, border_style="cyan", expand=False))
 
-    if prompt_user_confirmation(full_message):
-        success_commit = commit_with_message(full_message, repo_path)
-        if success_commit:
-            success_push = push_changes(repo_path)
-            if success_push:
+    if Confirm.ask("[green]✅ Do you want to commit with this message?[/green]"):
+        if commit_with_message(full_message, repo_path):
+            if push_changes(repo_path):
                 new_version = bump_patch_version(current_version)
                 write_new_version(repo_path, new_version)
-                print(f"🔁 Version bumped to v{new_version}")
+                console.print(f"[bold yellow]🔁 Version bumped to v{new_version}[/bold yellow]")
     else:
-        print("❌ Commit canceled by user.")
+        console.print("[red]❌ Commit canceled by user.[/red]")
+
 
 if __name__ == "__main__":
     main()

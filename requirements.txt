@@ -3,3 +3,4 @@ GitPython
 google-genai
 dotenv
 datetime
+rich
