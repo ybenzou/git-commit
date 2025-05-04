@@ -16,13 +16,11 @@ def get_git_diff_summary(repo_path):
             if not line:
                 continue
 
-            # Handle untracked files
             if line.startswith("??"):
                 added.append(line[3:])
                 continue
 
-            x = line[0]
-            y = line[1]
+            x, y = line[0], line[1]
             filepath = line[3:]
 
             if x == "A" or y == "A":
@@ -36,6 +34,28 @@ def get_git_diff_summary(repo_path):
     except Exception as e:
         print(f"❌ Error getting git status: {e}")
         return {"added": [], "modified": [], "deleted": []}
+
+def get_diff_content(repo_path):
+    try:
+        result = subprocess.run(["git", "diff"], capture_output=True, text=True, cwd=repo_path)
+        return result.stdout.strip()
+    except Exception as e:
+        print(f"❌ Failed to get diff: {e}")
+        return ""
+
+def truncate_diff_text(diff_text, max_tokens=3000):
+    lines = diff_text.strip().splitlines()
+    result_lines = []
+    current_tokens = 0
+
+    for line in lines:
+        line_tokens = len(line) // 4
+        if current_tokens + line_tokens > max_tokens:
+            break
+        result_lines.append(line)
+        current_tokens += line_tokens
+
+    return "\n".join(result_lines)
 
 def prompt_user_confirmation(message: str) -> bool:
     print("\n✏️ Suggested commit message:\n")
@@ -110,19 +130,20 @@ def main():
     current_version = read_or_create_version(repo_path)
 
     prompt = (
-        "You are a professional software developer. "
-        "Given the following file changes, write a concise Git commit message in English, following the Conventional Commit format.\n"
-        "- Use only one line.\n"
-        "- Do NOT include file names or markdown.\n"
-        "- Do NOT list all changes.\n"
-        "- Focus on summarizing the purpose of the commit.\n\n"
+        "You are a professional software engineer. "
+        "Write a one-line Git commit message using the Conventional Commit format "
+        "based on the following Git diff and file-level changes.\n\n"
     )
+
     if diff["added"]:
         prompt += f"Added files: {', '.join(diff['added'])}\n"
     if diff["modified"]:
         prompt += f"Modified files: {', '.join(diff['modified'])}\n"
     if diff["deleted"]:
         prompt += f"Deleted files: {', '.join(diff['deleted'])}\n"
+
+    diff_text = truncate_diff_text(get_diff_content(repo_path), max_tokens=3000)
+    prompt += f"\nGit diff:\n{diff_text}"
 
     print("🤖 Generating commit message with Gemini...")
     message = generate_commit_message(prompt)
